@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <meta name="description" content="Control de Stock - Ferretería" />
+  <title>FerrStock - Control de Inventario</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, getDocs, setDoc, deleteDoc, doc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ============================================================
+    // 🔧 CONFIGURACIÓN FIREBASE
+    // Reemplazá los valores de abajo con los de tu proyecto Firebase
+    // Seguí las instrucciones en INSTRUCCIONES.md
+    // ============================================================
+    const firebaseConfig = {
+      apiKey: "PEGA_TU_apiKey_ACÁ",
+      authDomain: "PEGA_TU_authDomain_ACÁ",
+      projectId: "PEGA_TU_projectId_ACÁ",
+      storageBucket: "PEGA_TU_storageBucket_ACÁ",
+      messagingSenderId: "PEGA_TU_messagingSenderId_ACÁ",
+      appId: "PEGA_TU_appId_ACÁ"
+    };
+    // ============================================================
+
+    let db = null;
+    const configured = !firebaseConfig.apiKey.includes("PEGA_TU");
+
+    if (configured) {
+      try {
+        const app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+      } catch(e) { console.warn("Firebase init error:", e); }
+    }
+
+    window._db = db;
+    window._useCloud = configured && db !== null;
+    window._fbFns = { collection, getDocs, setDoc, deleteDoc, doc, onSnapshot, serverTimestamp };
+    window.dispatchEvent(new Event('firebase-ready'));
+  </script>
+
+  <style>
+    :root {
+      --bg: #0f0f1a; --surface: #1a1a2e; --surface2: #242440;
+      --accent: #f5a623; --green: #2ecc71; --red: #e74c3c; --blue: #3498db;
+      --text: #f0f0f0; --text-muted: #aaaacc; --border: #333355;
+      --shadow: 0 4px 24px rgba(0,0,0,0.5);
+      --font-big: 'Barlow Condensed', sans-serif;
+      --font-body: 'Barlow', sans-serif;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-body); background: var(--bg); color: var(--text); font-size: 18px; min-height: 100vh; }
+
+    header { background: var(--surface); border-bottom: 3px solid var(--accent); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow); flex-wrap: wrap; gap: 10px; }
+    .logo { font-family: var(--font-big); font-size: 2.4rem; font-weight: 800; color: var(--accent); letter-spacing: 2px; }
+    .logo span { color: var(--text); }
+    .cloud-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 1rem; padding: 6px 16px; border-radius: 100px; font-weight: 700; font-family: var(--font-big); letter-spacing: 1px; }
+    .cloud-badge.online { background: rgba(46,204,113,0.2); color: var(--green); border: 1px solid var(--green); }
+    .cloud-badge.offline { background: rgba(245,166,35,0.15); color: var(--accent); border: 1px solid var(--accent); }
+
+    nav { background: var(--surface2); display: flex; border-bottom: 2px solid var(--border); padding: 0 28px; overflow-x: auto; }
+    .nav-btn { font-family: var(--font-big); font-size: 1.3rem; font-weight: 700; padding: 17px 26px; border: none; background: none; color: var(--text-muted); cursor: pointer; border-bottom: 4px solid transparent; transition: all 0.2s; white-space: nowrap; }
+    .nav-btn:hover { color: var(--accent); }
+    .nav-btn.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(245,166,35,0.08); }
+
+    main { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
+    .page { display: none; animation: fadeIn 0.3s ease; }
+    .page.active { display: block; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 32px; }
+    .stat-card { background: var(--surface); border-radius: var(--radius); padding: 28px; border: 2px solid var(--border); }
+    .stat-label { font-size: 1rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+    .stat-value { font-family: var(--font-big); font-size: 3rem; font-weight: 800; color: var(--accent); line-height: 1; }
+    .stat-value.green { color: var(--green); } .stat-value.red { color: var(--red); } .stat-value.blue { color: var(--blue); }
+
+    .toolbar { display: flex; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; align-items: center; }
+    .toolbar input, .toolbar select { font-family: var(--font-body); font-size: 1.1rem; padding: 13px 16px; background: var(--surface); border: 2px solid var(--border); border-radius: var(--radius); color: var(--text); outline: none; transition: border-color 0.2s; }
+    .toolbar input { flex: 1; min-width: 220px; }
+    .toolbar input:focus, .toolbar select:focus { border-color: var(--accent); }
+
+    .btn { font-family: var(--font-big); font-size: 1.15rem; font-weight: 700; letter-spacing: 1px; padding: 13px 22px; border: none; border-radius: var(--radius); cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+    .btn-primary { background: var(--accent); color: #111; } .btn-primary:hover { background: #ffb733; transform: translateY(-2px); }
+    .btn-danger { background: var(--red); color: #fff; } .btn-danger:hover { background: #c0392b; }
+    .btn-success { background: var(--green); color: #111; } .btn-success:hover { background: #27ae60; }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 2px solid var(--border); } .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-blue { background: var(--blue); color: #fff; }
+    .btn-sm { font-size: 0.95rem; padding: 8px 14px; }
+
+    .table-container { background: var(--surface); border-radius: var(--radius); border: 2px solid var(--border); overflow: hidden; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 680px; }
+    thead { background: var(--surface2); }
+    th { font-family: var(--font-big); font-size: 1.05rem; font-weight: 700; letter-spacing: 1px; padding: 18px 14px; text-align: left; color: var(--accent); text-transform: uppercase; cursor: pointer; }
+    th:hover { color: #ffb733; }
+    td { font-size: 1.05rem; padding: 14px; border-top: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background: rgba(245,166,35,0.05); }
+
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 100px; font-size: 0.88rem; font-weight: 700; font-family: var(--font-big); letter-spacing: 1px; }
+    .badge-ok { background: rgba(46,204,113,0.15); color: var(--green); border: 1px solid var(--green); }
+    .badge-low { background: rgba(245,166,35,0.15); color: var(--accent); border: 1px solid var(--accent); }
+    .badge-out { background: rgba(231,76,60,0.15); color: var(--red); border: 1px solid var(--red); }
+
+    .price { font-family: var(--font-big); font-size: 1.25rem; font-weight: 700; color: var(--green); }
+    .price.cost { color: var(--text-muted); font-size: 1.1rem; }
+    .editable-price { cursor: pointer; border-bottom: 1px dotted currentColor; }
+    .editable-price:hover { color: #ffb733; }
+    .inline-edit { display: none; align-items: center; gap: 6px; }
+    .inline-edit input { width: 120px; font-family: var(--font-big); font-size: 1.2rem; padding: 6px 10px; background: var(--bg); border: 2px solid var(--accent); border-radius: 6px; color: var(--green); }
+
+    .qty-controls { display: flex; align-items: center; gap: 6px; }
+    .qty-btn { width: 34px; height: 34px; border-radius: 6px; border: 2px solid var(--border); background: var(--surface2); color: var(--text); font-size: 1.3rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+    .qty-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .qty-num { font-family: var(--font-big); font-size: 1.3rem; font-weight: 700; min-width: 40px; text-align: center; cursor: pointer; }
+    .qty-num:hover { color: var(--accent); }
+
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center; padding: 16px; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--surface); border-radius: var(--radius); border: 2px solid var(--accent); padding: 36px; width: 100%; max-width: 620px; box-shadow: var(--shadow); animation: popIn 0.25s ease; max-height: 90vh; overflow-y: auto; }
+    @keyframes popIn { from { transform:scale(0.9);opacity:0; } to { transform:scale(1);opacity:1; } }
+    .modal h2 { font-family: var(--font-big); font-size: 2rem; font-weight: 800; color: var(--accent); margin-bottom: 24px; }
+    .form-group { margin-bottom: 18px; }
+    .form-group label { display: block; font-size: 0.95rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 7px; }
+    .form-group input, .form-group select { width: 100%; font-family: var(--font-body); font-size: 1.2rem; padding: 13px 15px; background: var(--bg); border: 2px solid var(--border); border-radius: 8px; color: var(--text); outline: none; transition: border-color 0.2s; }
+    .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .modal-actions { display: flex; gap: 12px; margin-top: 24px; justify-content: flex-end; }
+    .help-tip { font-size: 0.82rem; color: var(--text-muted); margin-top: 4px; }
+
+    .drop-zone { border: 3px dashed var(--accent); border-radius: var(--radius); padding: 48px; text-align: center; cursor: pointer; transition: all 0.3s; background: rgba(245,166,35,0.04); }
+    .drop-zone:hover, .drop-zone.drag-over { background: rgba(245,166,35,0.12); }
+    .drop-icon { font-size: 4rem; margin-bottom: 14px; }
+    .drop-text { font-family: var(--font-big); font-size: 1.8rem; font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+    .drop-sub { color: var(--text-muted); font-size: 1.05rem; }
+
+    .pdf-item { background: var(--surface2); border-radius: var(--radius); padding: 18px 22px; margin-bottom: 12px; border: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .pdf-item-name { font-family: var(--font-big); font-size: 1.25rem; font-weight: 700; margin-bottom: 2px; }
+    .pdf-item-detail { color: var(--text-muted); font-size: 0.92rem; }
+    .pdf-item-price { font-family: var(--font-big); font-size: 1.7rem; font-weight: 800; color: var(--green); }
+
+    .excel-zone { border: 3px dashed var(--blue); border-radius: var(--radius); padding: 32px; text-align: center; cursor: pointer; transition: all 0.3s; background: rgba(52,152,219,0.04); }
+    .excel-zone:hover { background: rgba(52,152,219,0.12); }
+
+    .section-title { font-family: var(--font-big); font-size: 1.7rem; font-weight: 800; margin-bottom: 18px; display: flex; align-items: center; gap: 14px; }
+    .section-title::after { content:''; flex:1; height:2px; background:var(--border); }
+
+    .info-banner { background: rgba(52,152,219,0.1); border: 2px solid var(--blue); border-radius: var(--radius); padding: 18px 22px; margin-bottom: 22px; display: flex; gap: 14px; align-items: flex-start; font-size: 1.05rem; }
+
+    .empty { text-align: center; padding: 56px; color: var(--text-muted); }
+    .empty-icon { font-size: 4rem; margin-bottom: 12px; }
+    .empty-text { font-family: var(--font-big); font-size: 1.5rem; font-weight: 600; }
+
+    .spinner { width: 30px; height: 30px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .loading-row { display: flex; align-items: center; gap: 14px; padding: 24px; color: var(--accent); font-size: 1.15rem; }
+
+    .toast { position: fixed; bottom: 26px; right: 26px; background: var(--green); color: #111; font-family: var(--font-big); font-size: 1.15rem; font-weight: 700; padding: 14px 26px; border-radius: var(--radius); box-shadow: var(--shadow); z-index: 9999; transform: translateY(100px); opacity: 0; transition: all 0.4s cubic-bezier(0.23,1,0.32,1); }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.error { background: var(--red); color: #fff; }
+    .toast.info { background: var(--blue); color: #fff; }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+    @media (max-width: 700px) {
+      main { padding: 14px; } header { padding: 12px 16px; } .logo { font-size: 1.8rem; }
+      nav { padding: 0 6px; } .nav-btn { padding: 12px 13px; font-size: 1.05rem; }
+      .form-row { grid-template-columns: 1fr; } .modal { padding: 22px; }
+      .excel-cols { grid-template-columns: 1fr !important; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">FERR<span>STOCK</span></div>
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span id="cloudBadge" class="cloud-badge offline">💾 MODO LOCAL</span>
+    <span id="headerInfo" style="color:var(--text-muted);font-size:0.95rem;"></span>
+  </div>
+</header>
+
+<nav>
+  <button class="nav-btn active" data-page="inicio" onclick="showPage('inicio',this)">🏠 INICIO</button>
+  <button class="nav-btn" data-page="productos" onclick="showPage('productos',this)">📦 PRODUCTOS</button>
+  <button class="nav-btn" data-page="pdf" onclick="showPage('pdf',this)">📄 PDF PROVEEDOR</button>
+  <button class="nav-btn" data-page="excel" onclick="showPage('excel',this)">📊 EXCEL</button>
+  <button class="nav-btn" data-page="alertas" onclick="showPage('alertas',this)">⚠️ ALERTAS</button>
+</nav>
+
+<main>
+
+  <!-- INICIO -->
+  <div class="page active" id="page-inicio">
+    <div id="configBanner" class="info-banner" style="display:none">
+      <span style="font-size:2rem">☁️</span>
+      <div>
+        <strong style="color:var(--blue);font-size:1.1rem;">Modo Local activo</strong> — Los datos se guardan solo en este navegador.<br>
+        Para ver los datos desde cualquier dispositivo, configurá Firebase siguiendo las instrucciones en <strong>INSTRUCCIONES.md</strong>.
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Total Productos</div><div class="stat-value blue" id="statTotal">—</div></div>
+      <div class="stat-card"><div class="stat-label">Stock OK</div><div class="stat-value green" id="statOk">—</div></div>
+      <div class="stat-card"><div class="stat-label">Stock Bajo</div><div class="stat-value" id="statLow">—</div></div>
+      <div class="stat-card"><div class="stat-label">Sin Stock</div><div class="stat-value red" id="statOut">—</div></div>
+    </div>
+    <div class="section-title">Últimos Cambios</div>
+    <div id="recentList"></div>
+  </div>
+
+  <!-- PRODUCTOS -->
+  <div class="page" id="page-productos">
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="🔍 Buscar por nombre, código o proveedor..." oninput="renderTable()" />
+      <select id="filterCat" onchange="renderTable()">
+        <option value="">Todas las categorías</option>
+        <option>Herramientas</option><option>Electricidad</option><option>Plomería</option>
+        <option>Pintura</option><option>Fijación</option><option>General</option>
+      </select>
+      <select id="filterStock" onchange="renderTable()">
+        <option value="">Todo el stock</option>
+        <option value="ok">✅ Stock OK</option>
+        <option value="low">⚠️ Stock Bajo</option>
+        <option value="out">⛔ Sin Stock</option>
+      </select>
+      <button class="btn btn-primary" onclick="openModal()">＋ AGREGAR</button>
+    </div>
+    <div class="table-container">
+      <table>
+        <thead><tr>
+          <th onclick="sortBy('nombre')">PRODUCTO ↕</th>
+          <th onclick="sortBy('categoria')">CATEGORÍA ↕</th>
+          <th onclick="sortBy('stock')">STOCK ↕</th>
+          <th onclick="sortBy('precio')">PRECIO VENTA ↕</th>
+          <th onclick="sortBy('costo')">PRECIO COSTO ↕</th>
+          <th>ESTADO</th>
+          <th>ACCIONES</th>
+        </tr></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div id="tableEmpty" class="empty" style="display:none">
+        <div class="empty-icon">📦</div><div class="empty-text">No se encontraron productos</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF -->
+  <div class="page" id="page-pdf">
+    <div class="section-title">Cargar Lista de Precios PDF</div>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('pdfInput').click()">
+      <div class="drop-icon">📄</div>
+      <div class="drop-text">TOCAR PARA SUBIR PDF DEL PROVEEDOR</div>
+      <div class="drop-sub">O arrastrá el archivo acá · Listas de precios, catálogos</div>
+      <input type="file" id="pdfInput" accept=".pdf" style="display:none" onchange="handlePDF(this.files[0])" />
+    </div>
+    <div id="pdfLoading" style="display:none"><div class="loading-row"><div class="spinner"></div> Leyendo el PDF...</div></div>
+    <div id="pdfResults"></div>
+  </div>
+
+  <!-- EXCEL -->
+  <div class="page" id="page-excel">
+    <div class="section-title">Exportar / Importar Excel</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-bottom:28px;" class="excel-cols">
+      <div style="background:var(--surface);border-radius:var(--radius);padding:30px;border:2px solid var(--border);">
+        <div style="font-family:var(--font-big);font-size:1.6rem;font-weight:800;margin-bottom:10px;color:var(--green);">⬇️ EXPORTAR</div>
+        <p style="color:var(--text-muted);font-size:1rem;margin-bottom:22px;line-height:1.7">Descargá todos los productos en un archivo Excel. Se puede abrir con Excel, Google Sheets o LibreOffice. Útil para tener un backup o compartir con alguien.</p>
+        <button class="btn btn-success" onclick="exportExcel()" style="width:100%;justify-content:center;font-size:1.25rem;padding:17px;">📥 DESCARGAR EXCEL</button>
+      </div>
+      <div style="background:var(--surface);border-radius:var(--radius);padding:30px;border:2px solid var(--border);">
+        <div style="font-family:var(--font-big);font-size:1.6rem;font-weight:800;margin-bottom:10px;color:var(--blue);">⬆️ IMPORTAR</div>
+        <p style="color:var(--text-muted);font-size:1rem;margin-bottom:22px;line-height:1.7">Cargá un Excel con productos. Si el producto ya existe (mismo nombre) actualiza el precio. Si no existe, lo agrega automáticamente.</p>
+        <div class="excel-zone" onclick="document.getElementById('xlsInput').click()">
+          <div style="font-size:2.5rem;margin-bottom:8px;">📂</div>
+          <div style="font-family:var(--font-big);font-size:1.25rem;font-weight:700;color:var(--blue);">SELECCIONAR ARCHIVO .xlsx</div>
+          <input type="file" id="xlsInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="importExcel(this.files[0])" />
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Columnas del Excel</div>
+    <div style="background:var(--surface);border-radius:var(--radius);padding:22px;border:2px solid var(--border);overflow-x:auto;">
+      <table style="min-width:580px;">
+        <thead><tr>
+          <th style="cursor:default">nombre *</th><th style="cursor:default">categoria</th>
+          <th style="cursor:default">stock</th><th style="cursor:default">minStock</th>
+          <th style="cursor:default">precio</th><th style="cursor:default">costo</th>
+          <th style="cursor:default">proveedor</th><th style="cursor:default">codigo</th><th style="cursor:default">unidad</th>
+        </tr></thead>
+        <tbody><tr>
+          <td>Tornillo 6mm</td><td>Fijación</td><td>50</td><td>10</td>
+          <td>350</td><td>180</td><td>Dist. Norte</td><td>TOR-6</td><td>Caja</td>
+        </tr></tbody>
+      </table>
+      <p style="color:var(--text-muted);margin-top:12px;font-size:0.92rem;">* Solo <strong>nombre</strong> es obligatorio. Las demás columnas son opcionales.</p>
+    </div>
+    <div id="importResults" style="margin-top:22px;"></div>
+  </div>
+
+  <!-- ALERTAS -->
+  <div class="page" id="page-alertas">
+    <div class="section-title">⚠️ Productos para Reponer</div>
+    <div id="alertList"></div>
+  </div>
+
+</main>
+
+<!-- MODAL PRODUCTO -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h2 id="modalTitle">Agregar Producto</h2>
+    <div class="form-group"><label>Nombre del Producto *</label><input type="text" id="fNombre" placeholder="Ej: Tornillo 6mm cabeza plana" /></div>
+    <div class="form-row">
+      <div class="form-group"><label>Categoría</label><select id="fCat"><option>Herramientas</option><option>Electricidad</option><option>Plomería</option><option>Pintura</option><option>Fijación</option><option>General</option></select></div>
+      <div class="form-group"><label>Unidad</label><select id="fUnidad"><option>Unidad</option><option>Caja</option><option>Metro</option><option>Kilo</option><option>Litro</option><option>Par</option><option>Bolsa</option><option>Rollo</option></select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Stock Actual</label><input type="number" id="fStock" placeholder="0" min="0" /></div>
+      <div class="form-group"><label>Stock Mínimo (alerta)</label><input type="number" id="fMin" placeholder="5" min="0" /><div class="help-tip">Cuando baje de este número aparece una alerta</div></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Precio de Costo $</label><input type="number" id="fCosto" placeholder="0.00" step="0.01" min="0" /></div>
+      <div class="form-group"><label>Precio de Venta $</label><input type="number" id="fPrecio" placeholder="0.00" step="0.01" min="0" /></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Proveedor</label><input type="text" id="fProveedor" placeholder="Ej: Distribuidora Norte" /></div>
+      <div class="form-group"><label>Código / Referencia</label><input type="text" id="fCodigo" placeholder="Ej: TOR-6MM" /></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal()">CANCELAR</button>
+      <button class="btn btn-primary" onclick="saveProduct()">💾 GUARDAR</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL STOCK -->
+<div class="modal-overlay" id="stockModal">
+  <div class="modal" style="max-width:400px;">
+    <h2>Ajustar Stock</h2>
+    <div id="stockModalInfo" style="font-size:1.2rem;margin-bottom:18px;color:var(--text-muted);"></div>
+    <div class="form-group"><label>Nueva Cantidad</label><input type="number" id="sStock" min="0" style="font-size:2.2rem;text-align:center;font-family:var(--font-big);font-weight:800;" /></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeStockModal()">CANCELAR</button>
+      <button class="btn btn-success" onclick="saveStock()">✓ ACTUALIZAR</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const LS_KEY = 'ferrstock_v2', LOG_KEY = 'ferrstock_log_v2';
+let products = [], actLog = [], editingId = null, stockEditId = null;
+let sortField = 'nombre', sortAsc = true;
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2,5); }
+function fmt(n) { if (n == null || n === '') return '—'; return Number(n).toLocaleString('es-AR',{minimumFractionDigits:0,maximumFractionDigits:2}); }
+
+// ——— INIT ———
+window.addEventListener('firebase-ready', async () => {
+  const useCloud = window._useCloud;
+  const badge = document.getElementById('cloudBadge');
+
+  if (useCloud) {
+    badge.textContent = '☁️ EN LA NUBE';
+    badge.className = 'cloud-badge online';
+    await loadCloud();
+    // Escuchar cambios en tiempo real
+    const { onSnapshot, collection } = window._fbFns;
+    onSnapshot(collection(window._db, 'productos'), snap => {
+      products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      saveLocal(); updateAll();
+    });
+  } else {
+    badge.textContent = '💾 MODO LOCAL';
+    badge.className = 'cloud-badge offline';
+    loadLocal();
+    document.getElementById('configBanner').style.display = 'flex';
+  }
+
+  if (!products.length) loadDemo();
+  updateAll();
+});
+
+function loadLocal() {
+  products = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+  actLog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+}
+
+function saveLocal() {
+  localStorage.setItem(LS_KEY, JSON.stringify(products));
+  localStorage.setItem(LOG_KEY, JSON.stringify(actLog));
+}
+
+async function loadCloud() {
+  try {
+    const { getDocs } = window._fbFns;
+    const snap = await getDocs(window._fbFns.collection(window._db, 'productos'));
+    products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    actLog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+    saveLocal();
+    toast('☁️ Sincronizado con la nube', false, 'info');
+  } catch(e) { loadLocal(); toast('Error conectando, usando datos locales', true); }
+}
+
+async function cloudSave(p) {
+  if (!window._useCloud) return;
+  try {
+    const { setDoc, doc, serverTimestamp } = window._fbFns;
+    const data = { ...p }; delete data.id;
+    data.updatedAt = serverTimestamp();
+    await setDoc(doc(window._db, 'productos', p.id), data);
+  } catch(e) { toast('Error guardando en la nube', true); }
+}
+
+async function cloudDelete(id) {
+  if (!window._useCloud) return;
+  try {
+    const { deleteDoc, doc } = window._fbFns;
+    await deleteDoc(doc(window._db, 'productos', id));
+  } catch(e) { console.error(e); }
+}
+
+function saveAll() { saveLocal(); updateAll(); }
+
+function updateAll() {
+  updateStats(); updateHeader();
+  if (document.getElementById('page-productos').classList.contains('active')) renderTable();
+  if (document.getElementById('page-alertas').classList.contains('active')) renderAlertas();
+  if (document.getElementById('page-inicio').classList.contains('active')) renderRecent();
+}
+
+function log(msg) {
+  actLog.unshift({ ts: Date.now(), msg });
+  if (actLog.length > 60) actLog.pop();
+  saveLocal();
+}
+
+function loadDemo() {
+  products = [
+    { id: uid(), nombre: 'Tornillo 6mm cabeza plana', categoria: 'Fijación', unidad: 'Caja', stock: 45, minStock: 10, precio: 350, costo: 180, proveedor: 'Ferretería Centro', codigo: 'TOR-6-CP' },
+    { id: uid(), nombre: 'Pintura látex blanca 4L', categoria: 'Pintura', unidad: 'Unidad', stock: 8, minStock: 5, precio: 4200, costo: 2800, proveedor: 'Pinturas SA', codigo: 'PLX-BL-4L' },
+    { id: uid(), nombre: 'Cable eléctrico 2.5mm x metro', categoria: 'Electricidad', unidad: 'Metro', stock: 3, minStock: 20, precio: 180, costo: 110, proveedor: 'ElectroNorte', codigo: 'CAB-2.5' },
+    { id: uid(), nombre: 'Llave ajustable 12"', categoria: 'Herramientas', unidad: 'Unidad', stock: 0, minStock: 3, precio: 2800, costo: 1900, proveedor: 'Herramientas Plus', codigo: 'LLV-ADJ-12' },
+    { id: uid(), nombre: 'Caño PVC 1/2" x 3m', categoria: 'Plomería', unidad: 'Unidad', stock: 22, minStock: 8, precio: 850, costo: 550, proveedor: 'Plomería Total', codigo: 'CAÑ-PVC-12-3' },
+  ];
+  products.forEach(p => cloudSave(p));
+  saveAll();
+}
+
+// ——— NAV ———
+function showPage(p, btn) {
+  document.querySelectorAll('.page').forEach(e => e.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(e => e.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  if (btn) btn.classList.add('active');
+  if (p === 'productos') renderTable();
+  if (p === 'alertas') renderAlertas();
+  if (p === 'inicio') renderRecent();
+}
+
+// ——— STATS ———
+function updateStats() {
+  document.getElementById('statTotal').textContent = products.length;
+  document.getElementById('statOk').textContent = products.filter(p => p.stock > p.minStock).length;
+  document.getElementById('statLow').textContent = products.filter(p => p.stock > 0 && p.stock <= p.minStock).length;
+  document.getElementById('statOut').textContent = products.filter(p => p.stock === 0).length;
+}
+
+function updateHeader() {
+  const out = products.filter(p => p.stock === 0).length;
+  const low = products.filter(p => p.stock > 0 && p.stock <= p.minStock).length;
+  let info = `${products.length} productos`;
+  if (out) info += ` · ⛔ ${out} sin stock`;
+  if (low) info += ` · ⚠️ ${low} bajo mínimo`;
+  document.getElementById('headerInfo').textContent = info;
+}
+
+function renderRecent() {
+  const el = document.getElementById('recentList');
+  if (!actLog.length) { el.innerHTML = '<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">No hay movimientos aún</div></div>'; return; }
+  el.innerHTML = actLog.slice(0,10).map(l => {
+    const d = new Date(l.ts);
+    const t = d.toLocaleDateString('es-AR') + ' ' + d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+    return `<div class="pdf-item"><div><div class="pdf-item-name">${l.msg}</div><div class="pdf-item-detail">${t}</div></div></div>`;
+  }).join('');
+}
+
+// ——— TABLA ———
+function renderTable() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  const cat = document.getElementById('filterCat').value;
+  const stk = document.getElementById('filterStock').value;
+  let list = products.filter(p => {
+    const mq = !q || p.nombre.toLowerCase().includes(q) || (p.codigo||'').toLowerCase().includes(q) || (p.proveedor||'').toLowerCase().includes(q);
+    const mc = !cat || p.categoria === cat;
+    let ms = true;
+    if (stk==='ok') ms = p.stock > p.minStock;
+    if (stk==='low') ms = p.stock > 0 && p.stock <= p.minStock;
+    if (stk==='out') ms = p.stock === 0;
+    return mq && mc && ms;
+  });
+  list.sort((a,b) => {
+    let va = a[sortField]??'', vb = b[sortField]??'';
+    if (typeof va==='string') va=va.toLowerCase();
+    if (typeof vb==='string') vb=vb.toLowerCase();
+    return sortAsc ? (va<vb?-1:va>vb?1:0) : (va>vb?-1:va<vb?1:0);
+  });
+  const tbody = document.getElementById('tableBody');
+  const empty = document.getElementById('tableEmpty');
+  if (!list.length) { tbody.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display='none';
+  tbody.innerHTML = list.map(p => {
+    let badge,bc;
+    if (p.stock===0){badge='SIN STOCK';bc='badge-out';}
+    else if(p.stock<=p.minStock){badge='STOCK BAJO';bc='badge-low';}
+    else{badge='OK';bc='badge-ok';}
+    const mg = (p.precio&&p.costo) ? Math.round(((p.precio-p.costo)/p.costo)*100) : null;
+    return `<tr>
+      <td><strong>${p.nombre}</strong>${p.codigo?`<br><small style="color:var(--text-muted)">${p.codigo}</small>`:''}${p.proveedor?`<br><small style="color:var(--text-muted)">📦 ${p.proveedor}</small>`:''}</td>
+      <td>${p.categoria}</td>
+      <td>
+        <div class="qty-controls">
+          <button class="qty-btn" onclick="adjustQty('${p.id}',-1)">−</button>
+          <span class="qty-num" onclick="openStockModal('${p.id}')">${p.stock}</span>
+          <button class="qty-btn" onclick="adjustQty('${p.id}',1)">+</button>
+        </div>
+        <small style="color:var(--text-muted)">${p.unidad} · mín ${p.minStock}</small>
+      </td>
+      <td>
+        <div class="price editable-price" id="disp-precio-${p.id}" onclick="startPriceEdit('${p.id}','precio')">$${fmt(p.precio)}</div>
+        <div class="inline-edit" id="ie-precio-${p.id}">
+          <input type="number" id="inp-precio-${p.id}" value="${p.precio||0}" onblur="commitPrice('${p.id}','precio')" onkeydown="if(event.key==='Enter')commitPrice('${p.id}','precio');if(event.key==='Escape')cancelEdit('${p.id}','precio')" />
+        </div>
+        ${mg!==null?`<small style="color:var(--text-muted)">Margen: ${mg}%</small>`:''}
+      </td>
+      <td>
+        <div class="price cost editable-price" id="disp-costo-${p.id}" onclick="startPriceEdit('${p.id}','costo')">$${fmt(p.costo)}</div>
+        <div class="inline-edit" id="ie-costo-${p.id}">
+          <input type="number" id="inp-costo-${p.id}" value="${p.costo||0}" onblur="commitPrice('${p.id}','costo')" onkeydown="if(event.key==='Enter')commitPrice('${p.id}','costo');if(event.key==='Escape')cancelEdit('${p.id}','costo')" />
+        </div>
+      </td>
+      <td><span class="badge ${bc}">${badge}</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-secondary btn-sm" onclick="openModal('${p.id}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteProduct('${p.id}')">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function sortBy(f) { if(sortField===f) sortAsc=!sortAsc; else{sortField=f;sortAsc=true;} renderTable(); }
+
+function startPriceEdit(id,field) {
+  document.getElementById(`disp-${field}-${id}`).style.display='none';
+  document.getElementById(`ie-${field}-${id}`).style.display='flex';
+  const inp = document.getElementById(`inp-${field}-${id}`);
+  inp.focus(); inp.select();
+}
+function cancelEdit(id,field) {
+  document.getElementById(`ie-${field}-${id}`).style.display='none';
+  document.getElementById(`disp-${field}-${id}`).style.display='';
+}
+async function commitPrice(id,field) {
+  const val = parseFloat(document.getElementById(`inp-${field}-${id}`).value);
+  if (!isNaN(val) && val>=0) {
+    const p = products.find(p=>p.id===id);
+    if(p){ p[field]=val; log(`Precio ${field==='precio'?'venta':'costo'} "${p.nombre}" → $${fmt(val)}`); saveAll(); await cloudSave(p); toast(`Precio actualizado: $${fmt(val)}`); }
+  }
+  renderTable();
+}
+
+async function adjustQty(id,delta) {
+  const p = products.find(p=>p.id===id); if(!p) return;
+  p.stock = Math.max(0,(p.stock||0)+delta);
+  log(`Stock "${p.nombre}": ${delta>0?'+1':'-1'} → ${p.stock}`);
+  saveAll(); await cloudSave(p); renderTable();
+  toast(delta>0?'+ 1 unidad agregada':'− 1 unidad descontada');
+}
+
+function openStockModal(id) {
+  stockEditId=id; const p=products.find(p=>p.id===id);
+  document.getElementById('stockModalInfo').textContent=p.nombre;
+  document.getElementById('sStock').value=p.stock;
+  document.getElementById('stockModal').classList.add('open');
+  setTimeout(()=>{const s=document.getElementById('sStock');s.focus();s.select();},100);
+}
+function closeStockModal() { document.getElementById('stockModal').classList.remove('open'); stockEditId=null; }
+async function saveStock() {
+  const val=parseInt(document.getElementById('sStock').value);
+  if(isNaN(val)||val<0){toast('Ingresá un número válido',true);return;}
+  const p=products.find(p=>p.id===stockEditId);
+  if(p){const prev=p.stock;p.stock=val;log(`Stock "${p.nombre}": ${prev}→${val}`);saveAll();await cloudSave(p);renderTable();toast(`Stock actualizado a ${val}`);}
+  closeStockModal();
+}
+
+function openModal(id=null) {
+  editingId=id;
+  document.getElementById('modalTitle').textContent=id?'Editar Producto':'Agregar Producto';
+  if(id){
+    const p=products.find(p=>p.id===id);
+    document.getElementById('fNombre').value=p.nombre||'';
+    document.getElementById('fCat').value=p.categoria||'General';
+    document.getElementById('fUnidad').value=p.unidad||'Unidad';
+    document.getElementById('fStock').value=p.stock??'';
+    document.getElementById('fMin').value=p.minStock??'';
+    document.getElementById('fCosto').value=p.costo??'';
+    document.getElementById('fPrecio').value=p.precio??'';
+    document.getElementById('fProveedor').value=p.proveedor||'';
+    document.getElementById('fCodigo').value=p.codigo||'';
+  } else {
+    ['fNombre','fStock','fMin','fCosto','fPrecio','fProveedor','fCodigo'].forEach(f=>document.getElementById(f).value='');
+    document.getElementById('fCat').value='General';
+    document.getElementById('fUnidad').value='Unidad';
+  }
+  document.getElementById('modal').classList.add('open');
+  setTimeout(()=>document.getElementById('fNombre').focus(),100);
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); editingId=null; }
+async function saveProduct() {
+  const nombre=document.getElementById('fNombre').value.trim();
+  if(!nombre){toast('El nombre es obligatorio',true);return;}
+  const data={ nombre, categoria:document.getElementById('fCat').value, unidad:document.getElementById('fUnidad').value,
+    stock:parseInt(document.getElementById('fStock').value)||0, minStock:parseInt(document.getElementById('fMin').value)||5,
+    costo:parseFloat(document.getElementById('fCosto').value)||0, precio:parseFloat(document.getElementById('fPrecio').value)||0,
+    proveedor:document.getElementById('fProveedor').value.trim(), codigo:document.getElementById('fCodigo').value.trim() };
+  if(editingId){
+    const idx=products.findIndex(p=>p.id===editingId);
+    products[idx]={...products[idx],...data};
+    log(`Editado: "${nombre}"`); await cloudSave(products[idx]); toast('Producto actualizado ✓');
+  } else {
+    data.id=uid(); products.push(data);
+    log(`Nuevo: "${nombre}"`); await cloudSave(data); toast('Producto agregado ✓');
+  }
+  saveAll(); closeModal(); renderTable();
+}
+async function deleteProduct(id) {
+  const p=products.find(p=>p.id===id);
+  if(!confirm(`¿Eliminar "${p.nombre}"?`)) return;
+  products=products.filter(p=>p.id!==id);
+  log(`Eliminado: "${p.nombre}"`); saveAll(); await cloudDelete(id); renderTable(); toast('Producto eliminado');
+}
+
+function renderAlertas() {
+  const list=products.filter(p=>p.stock===0||p.stock<=p.minStock);
+  const el=document.getElementById('alertList');
+  if(!list.length){el.innerHTML='<div class="empty"><div class="empty-icon">✅</div><div class="empty-text">¡Todo el stock está bien!</div></div>';return;}
+  el.innerHTML=list.map(p=>{
+    const isOut=p.stock===0;
+    return `<div class="pdf-item" style="border-color:${isOut?'var(--red)':'var(--accent)'}">
+      <div><div class="pdf-item-name">${isOut?'⛔':'⚠️'} ${p.nombre}</div><div class="pdf-item-detail">${p.categoria} · ${p.proveedor||'Sin proveedor'} · Mín: ${p.minStock} ${p.unidad}</div></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="qty-controls">
+          <button class="qty-btn" onclick="adjAlert('${p.id}',-1)">−</button>
+          <span class="qty-num">${p.stock}</span>
+          <button class="qty-btn" onclick="adjAlert('${p.id}',1)">+</button>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="openModal('${p.id}')">EDITAR</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function adjAlert(id,delta){const p=products.find(p=>p.id===id);if(!p)return;p.stock=Math.max(0,(p.stock||0)+delta);log(`Stock "${p.nombre}": ${p.stock}`);saveAll();await cloudSave(p);renderAlertas();}
+
+// ——— PDF ———
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const dz=document.getElementById('dropZone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over');handlePDF(e.dataTransfer.files[0]);});
+
+async function handlePDF(file){
+  if(!file||file.type!=='application/pdf'){toast('Solo archivos PDF',true);return;}
+  document.getElementById('pdfLoading').style.display='block';
+  document.getElementById('pdfResults').innerHTML='';
+  try{
+    const ab=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:ab}).promise;
+    let text='';
+    for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const c=await pg.getTextContent();text+=c.items.map(s=>s.str).join(' ')+'\n';}
+    processPDF(text,file.name);
+  }catch(e){toast('Error al leer el PDF',true);}
+  finally{document.getElementById('pdfLoading').style.display='none';}
+}
+
+function processPDF(text,fname){
+  const lines=text.split(/\n/).map(l=>l.trim()).filter(l=>l.length>3);
+  const items=[];
+  const rx=/\$?\s*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?)/g;
+  lines.forEach(line=>{
+    const m=[...line.matchAll(rx)];
+    if(m.length){
+      const rp=m[m.length-1][1].replace(/\./g,'').replace(',','.');
+      const price=parseFloat(rp);
+      if(price>0&&price<10000000){
+        let name=line; m.forEach(x=>{name=name.replace(x[0],'');});
+        name=name.replace(/\s+/g,' ').trim();
+        if(name.length>3&&name.length<120) items.push({name,price});
+      }
+    }
+  });
+  const el=document.getElementById('pdfResults');
+  el.__items=items;
+  if(!items.length){el.innerHTML=`<div class="info-banner"><span style="font-size:1.8rem">ℹ️</span><div>No se detectaron precios automáticamente. Podés cargar los productos manualmente.</div></div>`;return;}
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:22px 0 14px;flex-wrap:wrap;gap:10px;">
+      <div style="font-family:var(--font-big);font-size:1.4rem;font-weight:800;">📋 ${items.length} productos en "${fname}"</div>
+      <button class="btn btn-success" onclick="importAllPDF()">✓ IMPORTAR TODOS</button>
+    </div>
+    <div>${items.map((item,i)=>`
+      <div class="pdf-item" id="pdfItem-${i}">
+        <div style="flex:1"><div class="pdf-item-name">${item.name}</div></div>
+        <div class="pdf-item-price">$${fmt(item.price)}</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="importPDF(${i})">+ AGREGAR</button>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('pdfItem-${i}').remove()">✕</button>
+        </div>
+      </div>`).join('')}</div>`;
+}
+
+async function importPDF(i){
+  const el=document.getElementById('pdfResults');
+  const item=el.__items[i]; if(!item) return;
+  const exists=products.find(p=>p.nombre.toLowerCase()===item.name.toLowerCase());
+  if(exists){exists.costo=item.price;log(`PDF precio costo "${exists.nombre}" → $${fmt(item.price)}`);saveAll();await cloudSave(exists);toast(`Precio actualizado: ${exists.nombre}`);}
+  else{const d={id:uid(),nombre:item.name,categoria:'General',unidad:'Unidad',stock:0,minStock:5,costo:item.price,precio:Math.round(item.price*1.4),proveedor:'PDF importado',codigo:''};products.push(d);log(`PDF importado: "${item.name}"`);saveAll();await cloudSave(d);toast(`Agregado: ${item.name}`);}
+  const row=document.getElementById(`pdfItem-${i}`);
+  if(row){row.style.opacity='0.4';row.innerHTML+='<span style="color:var(--green);font-weight:700;padding:0 10px">✓</span>';}
+}
+async function importAllPDF(){const el=document.getElementById('pdfResults');if(!el.__items)return;for(let i=0;i<el.__items.length;i++)await importPDF(i);toast('¡Todos importados! ✓');}
+
+// ——— EXCEL ———
+function exportExcel(){
+  if(!products.length){toast('No hay productos para exportar',true);return;}
+  const ws=XLSX.utils.json_to_sheet(products.map(p=>({nombre:p.nombre,categoria:p.categoria,unidad:p.unidad,stock:p.stock,minStock:p.minStock,precio:p.precio,costo:p.costo,proveedor:p.proveedor,codigo:p.codigo})));
+  ws['!cols']=[{wch:35},{wch:14},{wch:10},{wch:8},{wch:8},{wch:12},{wch:12},{wch:22},{wch:14}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Productos');
+  XLSX.writeFile(wb,`ferrstock-${new Date().toLocaleDateString('es-AR').replace(/\//g,'-')}.xlsx`);
+  log(`Exportado Excel (${products.length} productos)`);
+  toast(`Excel descargado · ${products.length} productos ✓`);
+}
+
+async function importExcel(file){
+  if(!file) return;
+  document.getElementById('importResults').innerHTML='<div class="loading-row"><div class="spinner"></div> Leyendo archivo...</div>';
+  try{
+    const ab=await file.arrayBuffer();
+    const wb=XLSX.read(ab);
+    const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+    if(!rows.length){toast('El archivo está vacío',true);return;}
+    let added=0,updated=0,errors=0;
+    for(const row of rows){
+      const nombre=String(row.nombre||row.Nombre||row.NOMBRE||'').trim();
+      if(!nombre){errors++;continue;}
+      const data={nombre,categoria:String(row.categoria||row.Categoría||'General').trim(),unidad:String(row.unidad||row.Unidad||'Unidad').trim(),
+        stock:parseInt(row.stock||row.Stock||0)||0,minStock:parseInt(row.minStock||row['min stock']||5)||5,
+        precio:parseFloat(row.precio||row.Precio||0)||0,costo:parseFloat(row.costo||row.Costo||0)||0,
+        proveedor:String(row.proveedor||row.Proveedor||'').trim(),codigo:String(row.codigo||row.Código||row.Codigo||'').trim()};
+      const ex=products.find(p=>p.nombre.toLowerCase()===nombre.toLowerCase());
+      if(ex){Object.assign(ex,data);await cloudSave(ex);updated++;}
+      else{data.id=uid();products.push(data);await cloudSave(data);added++;}
+    }
+    saveAll();
+    log(`Excel importado: ${added} nuevos, ${updated} actualizados`);
+    document.getElementById('importResults').innerHTML=`
+      <div style="background:var(--surface);border-radius:var(--radius);padding:26px;border:2px solid var(--green);">
+        <div style="font-family:var(--font-big);font-size:1.7rem;font-weight:800;color:var(--green);margin-bottom:14px;">✅ Importación completada</div>
+        <div style="font-size:1.15rem;line-height:2">
+          ✅ <strong>${added}</strong> productos nuevos<br>
+          🔄 <strong>${updated}</strong> productos actualizados<br>
+          ${errors?`⚠️ <strong>${errors}</strong> filas sin nombre (ignoradas)`:''}
+        </div>
+        <button class="btn btn-primary" style="margin-top:18px" onclick="showPage('productos',document.querySelector('[data-page=productos]'))">VER PRODUCTOS →</button>
+      </div>`;
+    toast(`Importación exitosa · ${added+updated} productos`);
+  }catch(e){toast('Error al leer el archivo',true);document.getElementById('importResults').innerHTML='';}
+  document.getElementById('xlsInput').value='';
+}
+
+// ——— TOAST ———
+function toast(msg,error=false,type=''){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='toast'+(error?' error':'')+(type==='info'?' info':'');
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+['modal','stockModal'].forEach(id=>{
+  document.getElementById(id).addEventListener('click',e=>{if(e.target===e.currentTarget){id==='modal'?closeModal():closeStockModal();}});
+});
+</script>
+</body>
+</html>
